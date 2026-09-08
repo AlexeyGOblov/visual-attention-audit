@@ -104,5 +104,8 @@ Measures published in Rosenholtz, R., Li, Y., & Nakano, L. (2007).
 
 Algorithm structure and every numeric constant follow the MIT-licensed reference port
 [kargaranamir/visual-clutter](https://github.com/kargaranamir/visual-clutter) by the User
-Interfaces group at Aalto University. MIT licence, full third-party notice in
-[LICENSE](LICENSE).
+Interfaces group at Aalto University.
+
+This project is MIT licensed ([LICENSE](LICENSE)). The upstream notice, the citation and
+a list of what was changed are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

@@ -150,4 +150,4 @@ batches, measure at display width and the whole thing becomes cheap.
 
 Measures published by Rosenholtz, Li and Nakano (Journal of Vision, 2007). Constants and
 algorithm structure follow the MIT-licensed reference port by the User Interfaces group at
-Aalto University. See LICENSE for the full notices.
+Aalto University. See THIRD-PARTY-NOTICES.md for the upstream notice and the citation.
