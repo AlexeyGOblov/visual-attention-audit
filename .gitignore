@@ -3,3 +3,7 @@ __pycache__/
 out/
 result/
 maps/
+
+# Переходники для агентов внутри второго мозга: наружу не нужны
+AGENTS.md
+CLAUDE.md
