@@ -138,6 +138,13 @@ provenance of the weights and why better models were rejected:
   the numbers say is noticed is the finding. Without the list there is no finding, only
   arithmetic.
 
+## Last: the report
+
+Every run ends with a report folder, `report.md` and the frames it shows: what was done,
+how it was checked, the result and the recommendations, for each mode that ran. The
+template and its rules: [reference/report.md](reference/report.md). Where the report is
+published is the caller's business, not this skill's.
+
 ## What this is not
 
 - **Not eye tracking.** Where a tool claims a percentage of accuracy, ask which metric and
@@ -167,6 +174,7 @@ provenance of the weights and why better models were rejected:
 | `reference/attention.md` | the model, its provenance, its limits, why no trajectory |
 | `reference/validation.md` | every check that was run, and where checking stops |
 | `reference/claims.md` | allowed and forbidden wording, with the evidence |
+| `reference/report.md` | the one shape every report takes |
 
 ## Credit
 

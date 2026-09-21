@@ -260,16 +260,25 @@ def main() -> int:
     print("this is a predicted density of attention, not a measurement of anyone's gaze")
     print()
 
+    # Frames from different cards often share a name (00.png); qualify those by their
+    # folder so one card's maps do not overwrite another's.
+    bases = [os.path.basename(p) for p in args.images]
+    stems = [os.path.splitext(b)[0] for b in bases]
+    names = [f"{os.path.basename(os.path.dirname(os.path.abspath(p)))}_{b}"
+             if stems.count(s) > 1 else b for p, b, s in zip(args.images, bases, stems)]
+    if len({os.path.splitext(n)[0] for n in names}) < len(names):
+        raise SystemExit("two frames would write to the same map name; rename them or run them apart")
+
     out = []
-    for path in args.images:
+    for path, name in zip(args.images, names):
         att, frame = predict(path, args.model)
         stats = read_map(att)
-        stats["file"] = os.path.basename(path)
+        stats["file"] = name
         stats["kind"] = kind.name
 
         if args.out:
             os.makedirs(args.out, exist_ok=True)
-            stem = os.path.splitext(os.path.basename(path))[0]
+            stem = os.path.splitext(name)[0]
             norm = att / att.max() if att.max() > 0 else att
             raw = os.path.join(args.out, f"{stem}-attention.png")
             over = os.path.join(args.out, f"{stem}-attention-over.png")
