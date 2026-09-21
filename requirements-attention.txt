@@ -1,0 +1,3 @@
+# The predicted attention map. Optional: the clutter measures do not need any of this.
+# Inference only, on the CPU. No TensorFlow, no GPU, no network at run time.
+onnxruntime>=1.17

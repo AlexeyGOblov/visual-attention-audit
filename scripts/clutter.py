@@ -15,11 +15,15 @@ Verify the implementation before trusting a number:
 
 Usage:
 
-    python clutter.py frame.png [more.png ...] [--width 190] [--json out.json] [--maps dir]
+    python clutter.py frame.png [more.png ...] --kind marketplace_card [--json out.json]
 
-`--width` rescales each frame to the width it is actually displayed at before measuring.
-This matters: a 1200 px design shown at 190 px in a grid is a different stimulus, and
-clutter has to be measured at the size the viewer actually sees.
+`--kind` says what the frame is. It is required and it is never guessed: the kind decides
+the widths the frame is measured at, which numbers carry meaning, which direction counts
+as a fault, and what the frame should be compared against. See kinds.py.
+
+Each kind carries the widths it is really seen at, and the frame is measured at all of
+them. This matters: a 1200 px design shown at 190 px in a grid is a different stimulus,
+and clutter has to be measured at the size the viewer actually sees.
 """
 from __future__ import annotations
 
@@ -32,6 +36,9 @@ import sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage, signal
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kinds  # noqa: E402
 
 # ------------------------------------------------------------------ colour space
 
@@ -411,6 +418,57 @@ def edge_density(rgb: np.ndarray) -> float:
     return float((mag > 0.1 * mag.max()).mean()) if mag.max() > 0 else 0.0
 
 
+def _stroke_width(mask: np.ndarray) -> int:
+    """Median width of a horizontal run of edge pixels: roughly one pen stroke."""
+    pad = np.zeros((mask.shape[0], 1), bool)
+    d = np.diff(np.hstack([pad, mask, pad]).astype(np.int8), axis=1)
+    starts, ends = np.argwhere(d == 1), np.argwhere(d == -1)
+    if len(starts) == 0 or len(starts) != len(ends):
+        return 1
+    return max(1, int(np.median(ends[:, 1] - starts[:, 1])))
+
+
+def text_mass(rgb: np.ndarray) -> dict:
+    """How much of the frame is lines of text, and how tall they are in pixels.
+
+    Not OCR and not a text detector: it finds things shaped like a line of text, by
+    closing strong edges horizontally and keeping the wide, short, well-filled blobs
+    that survive. It answers the one question a saliency model cannot answer, because
+    every such model resizes the frame to about 300 px before it looks at anything: at
+    the width this design is really shown, does its lettering still exist.
+
+    `line_height_px` is the number to read. Below roughly 8 px nothing is legible to
+    anyone, which is also where OCR engines give up; below 12 px a caption is a texture
+    rather than a message.
+    """
+    g = np.asarray(Image.fromarray(rgb.astype(np.uint8)).convert("L"), dtype=np.float64)
+    h, w = g.shape
+    mag = np.hypot(ndimage.sobel(g, axis=1), ndimage.sobel(g, axis=0))
+    if mag.max() <= 0:
+        return {"text_mass": 0.0, "line_height_px": 0.0, "lines": 0}
+
+    strong = mag > 0.2 * mag.max()
+    gap = min(max(3, 3 * _stroke_width(strong)), max(3, w // 40))
+    closed = ndimage.binary_closing(strong, np.ones((1, gap), bool))
+    labels, count = ndimage.label(closed, np.ones((3, 3), bool))
+    if not count:
+        return {"text_mass": 0.0, "line_height_px": 0.0, "lines": 0}
+
+    area, heights = 0, []
+    for sl in ndimage.find_objects(labels):
+        bh, bw = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        if bh < 3 or bh > h / 8 or bw < 2 * bh or bw > 0.97 * w:
+            continue                                        # not shaped like a text line
+        if closed[sl].mean() < 0.25:                        # a sparse frame, not lettering
+            continue
+        area += bh * bw
+        heights.append(bh)
+
+    return {"text_mass": round(area / float(h * w), 4),
+            "line_height_px": round(float(np.median(heights)), 1) if heights else 0.0,
+            "lines": len(heights)}
+
+
 def colour_mass(rgb: np.ndarray, blur_px: float = 2.5) -> float:
     """What survives peripheral vision: mean Lab chroma of a blurred frame.
 
@@ -432,7 +490,8 @@ def load_rgb(path: str, width: int | None = None) -> np.ndarray:
     return np.asarray(im)
 
 
-def measure(path: str, width: int | None = None, maps_dir: str | None = None) -> dict:
+def measure(path: str, width: int | None = None, maps_dir: str | None = None,
+            tag: str = "") -> dict:
     rgb = load_rgb(path, width)
     fc, cmap, parts = feature_congestion(rgb)
     res = {
@@ -444,10 +503,12 @@ def measure(path: str, width: int | None = None, maps_dir: str | None = None) ->
         "colour_mass": round(colour_mass(rgb), 4),
         "components": {k: round(v, 6) for k, v in parts.items()},
     }
+    res.update(text_mass(rgb))
     if maps_dir:
         os.makedirs(maps_dir, exist_ok=True)
         norm = (cmap - cmap.min()) / max(cmap.max() - cmap.min(), 1e-9)
-        out = os.path.join(maps_dir, os.path.splitext(os.path.basename(path))[0] + "-fc.png")
+        stem = os.path.splitext(os.path.basename(path))[0]
+        out = os.path.join(maps_dir, f"{stem}{tag}-fc.png")
         Image.fromarray((norm * 255).astype(np.uint8)).save(out)
         res["map"] = out
     return res
@@ -485,16 +546,39 @@ def selftest() -> int:
     fn, _, _ = feature_congestion(noise)
     print(f"   FC blank {fw:.3f} against noise {fn:.3f}; "
           f"SE {subband_entropy(white):.3f} against {subband_entropy(noise):.3f}")
-    ok = ok_tiling and fc_ok and se_ok and fw < fn
+    print("4. Text mass finds lettering, ignores a blank frame, is not fooled by noise")
+    lettered = np.full((200, 400, 3), 255, dtype=np.uint8)
+    for row in range(20, 180, 26):
+        for col in range(20, 380, 7):
+            lettered[row:row + 11, col:col + 4] = 0      # bars the shape of letters
+    blank = np.full((200, 400, 3), 255, dtype=np.uint8)
+    speckle = rng.integers(0, 256, (200, 400, 3)).astype(np.uint8)
+    t_let, t_blank, t_noise = text_mass(lettered), text_mass(blank), text_mass(speckle)
+    print(f"   lettered: mass {t_let['text_mass']:.3f}, {t_let['lines']} lines of "
+          f"{t_let['line_height_px']} px")
+    print(f"   blank:    mass {t_blank['text_mass']:.3f}   "
+          f"noise: mass {t_noise['text_mass']:.3f}")
+    text_ok = (t_let["text_mass"] > 0.05 and 6 <= t_let["line_height_px"] <= 20
+               and t_blank["text_mass"] == 0.0 and t_noise["text_mass"] < t_let["text_mass"])
+    print(f"   text mass behaves: {text_ok}")
+
+    ok = ok_tiling and fc_ok and se_ok and fw < fn and text_ok
     print(f"\nself-test {'passed' if ok else 'FAILED'}")
     return 0 if ok else 1
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Rosenholtz visual clutter measures")
+    ap = argparse.ArgumentParser(
+        description="Rosenholtz visual clutter measures",
+        epilog=kinds.catalogue(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("images", nargs="*", help="frames to measure")
-    ap.add_argument("--width", type=int, default=None,
-                    help="rescale to the actual display width before measuring")
+    ap.add_argument("--kind", choices=kinds.NAMES, metavar="KIND",
+                    help="what the frame is; see the list below")
+    ap.add_argument("--width", type=int, action="append", default=None,
+                    help="measure at this width instead of the ones the kind calls for; "
+                         "may be repeated")
     ap.add_argument("--json", default=None, help="write results here")
     ap.add_argument("--maps", default=None, help="directory for local clutter maps")
     ap.add_argument("--selftest", action="store_true", help="verify the implementation")
@@ -504,14 +588,45 @@ def main() -> int:
         return selftest()
     if not args.images:
         ap.error("pass frames to measure, or --selftest")
+    if not args.kind:
+        ap.error("--kind is required. The tool does not guess what it is looking at, "
+                 "because a kind guessed wrong is read under the wrong rules and says "
+                 "so nowhere.\n\n" + kinds.catalogue())
+
+    kind = kinds.get(args.kind)
+    if args.width:
+        if kind.width_lock:
+            ap.error(f"--width does not apply to {kind.name}: {kind.width_lock}.")
+        runs = [(w, "given on the command line") for w in args.width]
+    else:
+        runs = list(kind.widths)
+
+    for line in kinds.describe(kind):
+        print(line)
+    print()
 
     out = []
     for path in args.images:
-        r = measure(path, args.width, args.maps)
-        out.append(r)
-        print(f"{r['file']}: FC {r['feature_congestion']}, SE {r['subband_entropy']}, "
-              f"edges {r['edge_density']}, colour {r['colour_mass']}, "
-              f"size {r['size'][0]}x{r['size'][1]}")
+        entry = {"file": os.path.basename(path), "kind": kind.name,
+                 "kind_source": "declared", "measurements": []}
+        for width, why in runs:
+            tag = f"-{width}" if width and len(runs) > 1 else ""
+            r = measure(path, width, args.maps, tag)
+            r.pop("file", None)
+            r["width"] = width
+            r["width_reason"] = why
+            entry["measurements"].append(r)
+            at = f"{width} px" if width else "native"
+            print(f"{entry['file']} at {at}: FC {r['feature_congestion']}, "
+                  f"SE {r['subband_entropy']}, edges {r['edge_density']}, "
+                  f"colour {r['colour_mass']}, text {r['text_mass']} in "
+                  f"{r['lines']} lines of {r['line_height_px']} px, "
+                  f"size {r['size'][0]}x{r['size'][1]}")
+            if 0 < r["line_height_px"] < 8:
+                print(f"    the lettering is {r['line_height_px']} px tall here. "
+                      f"Nobody reads it at this width, and no measure below changes that.")
+        out.append(entry)
+
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(out, fh, ensure_ascii=False, indent=1)

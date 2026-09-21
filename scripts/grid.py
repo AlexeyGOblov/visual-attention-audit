@@ -30,6 +30,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from clutter import edge_density, feature_congestion, rgb_to_lab, subband_entropy  # noqa: E402
+import kinds  # noqa: E402
 
 
 # ------------------------------------------------------------------ grid detection
@@ -188,8 +189,14 @@ def run(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Rank a frame against its neighbours in a grid")
+    ap = argparse.ArgumentParser(
+        description="Rank a frame against its neighbours in a grid",
+        epilog=kinds.catalogue(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("image", help="screenshot of the grid")
+    ap.add_argument("--kind", choices=kinds.NAMES, metavar="KIND",
+                    help="what the image is; only results_grid can be cut")
     ap.add_argument("--out", required=True, help="directory for tiles and results")
     ap.add_argument("--mine", type=int, default=None, help="index of your tile after cutting")
     ap.add_argument("--cols", type=int, default=None, help="force the number of columns")
@@ -200,7 +207,19 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=12, help="how many ranks to print")
     ap.add_argument("--full", action="store_true", help="also compute clutter measures (slow)")
     ap.add_argument("--grid", action="store_true", help="only report the detected grid")
-    return run(ap.parse_args())
+    args = ap.parse_args()
+
+    if not args.kind:
+        ap.error("--kind is required. Grid mode cuts on quiet strips, and on anything "
+                 "that is not a grid it finds strips anyway and ranks nonsense "
+                 "convincingly.\n\n" + kinds.catalogue())
+    kind = kinds.get(args.kind)
+    if not kind.grid:
+        ap.error(f"grid mode does not apply to {kind.name} ({kind.summary}). "
+                 f"It is for results_grid: one screenshot holding a frame and its "
+                 f"neighbours. To place a single card among competitors, capture the "
+                 f"search results and pass that.")
+    return run(args)
 
 
 if __name__ == "__main__":
